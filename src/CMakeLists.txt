@@ -52,3 +52,11 @@ set_target_properties(vault-transfer PROPERTIES
   VERSION ${VERSION}
   )
 install(TARGETS vault-transfer DESTINATION ${DST_LIB})
+
+add_executable(vault-copy vault-copy.cpp)
+qt5_use_modules(vault-copy Core)
+target_link_libraries(vault-copy
+  ${QTAROUND_LIBRARIES}
+  ${COR_LIBRARIES}
+  )
+install(TARGETS vault-copy DESTINATION bin)
