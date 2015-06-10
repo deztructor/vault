@@ -8,26 +8,9 @@ source $src/testing-common-vault.sh
 
 create_test_dir
 
-test_home=
-storage=
-
-user_name=User1
-email=mail@user
-
-function cd_vault_and_check_it {
-    cd $storage || failed 2 "No vault dir $storage"
-    init_root_and_enter
-    check_is_vault_storage $storage/.git
-    cd .git || failed 4 "No .git"
-    [ "$(git config user.name)" == "$user_name" ] || test_failed 5 "User name is wrong"
-    [ "$(git config user.email)" == "$email" ] || test_failed 5 "User email is wrong"
-    cd .. || test_failed 6 "Can't cd .."
-}
-
 NEXT_TEST "Create empty vault"
 create_test_dirs 1
-vault -V $storage -H $test_home -a init -g user.name=$user_name,user.email=$email \
-    || test_failed 1 "Vault init is failed"
+vault_create
 cd_vault_and_check_it
 
 NEXT_TEST "Create empty vault, long options"

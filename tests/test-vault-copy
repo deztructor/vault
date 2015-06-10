@@ -9,7 +9,7 @@ source $src/testing-common-vault.sh
 create_test_dir
 
 write_text() {
-    echo "text:$1" > $2
+    echo -ne "$1" > $2
 }
 
 write_random() {
@@ -20,36 +20,89 @@ dump_curdir_tree() {
     for f in $(find | sort); do
         if [ -d $f ]; then
             echo "d:$f"
+        elif [ -L $f ]; then
+            echo "l:$f:$(readlink $f)"
         elif [ -f $f ]; then
             if [ "$(head -c 5 $f)" == "text:" ]; then
                 echo "f:$f:$(cat $f)"
             else
                 echo "f:$f:md5:$(md5sum -b $f)"
             fi
-        elif [ -L $s ]; then
-            echo "d:$f"
         fi
     done
 }
 
+
+storage_path() {
+    echo $storage/root/$1
+}
+
 check_home_storage_same_filenames() {
-    cd $storage && dump_curdir_tree > $test_dir/find_src
-    cd $test_home/$(basename $storage) && dump_curdir_tree > $test_dir/find_dst
+    cd $(storage_path) && dump_curdir_tree > $test_dir/find_src
+    cd $test_home && dump_curdir_tree > $test_dir/find_dst
     diff $test_dir/find_src $test_dir/find_dst || error 11 "Tree is not fully copied?"
 }
 
+create_test_dirs_and_vault() {
+    create_test_dirs_next
+    vault_create
+    cd_vault_and_check_it
+}
+
 NEXT_TEST "Basic copy"
-create_test_dirs 1
-mkdir -p $storage/d0
-touch $storage/f1
-write_text "2" $storage/f2
-write_text "0123456789 0123456789" $storage/f3
-write_random 1024 1058 $storage/big_f4
-vault-copy -a import -r $storage $test_home || error 21 "copy existed with $?"
-check_home_storage_same_filenames
+create_test_dirs_and_vault
+basic_vault_import_single() {
+    trace "Import $1 to $test_home"
+    vault-copy -a import -r $1 $test_home || error 21 "copy existed with $?"
+    check_home_storage_same_filenames
+    rm $1 -rf
+    rm $test_home/* -rf
+}
+# dir
+entry_name=$(storage_path d0)
+mkdir -p $entry_name
+basic_vault_import_single $entry_name 
+
+#empty file
+entry_name=$(storage_path f1)
+touch $entry_name
+basic_vault_import_single $entry_name
+
+# 1-sym file
+entry_name=$(storage_path f2)
+write_text "2" $entry_name
+basic_vault_import_single $entry_name
+
+# longer text
+entry_name=$(storage_path f3)
+write_text "0123456789 0123456789" $entry_name
+basic_vault_import_single $entry_name
+
+# big file (> chunk size)
+entry_name=$(storage_path big4)
+write_random 1024 1058 $entry_name
+basic_vault_import_single $entry_name
+
+# symlink
+entry_name=$(storage_path ln1)
+target_name=$storage/f1
+touch $target_name
+ln -s $target_name $entry_name
+basic_vault_import_single $entry_name
+
+# rel symlink
+entry_name=$(storage_path ln1)
+target_name=../f1
+pushd $(storage_path)
+touch $target_name
+ln -s $target_name $entry_name
+popd
+basic_vault_import_single $entry_name
+
+exit 0
 
 NEXT_TEST "Copy when exists"
-create_test_dirs 2
+create_test_dirs_and_vault
 # src
 mkdir -p $storage/d0
 touch $storage/f1
@@ -64,3 +117,8 @@ write_text "before" $test_home/f3
 write_random 1024 512 $test_home/big_f4
 vault-copy -a import -r $storage $test_home || error 22 "copy existed with $?"
 check_home_storage_same_filenames
+
+NEXT_TEST "Copy binary"
+create_test_dirs_and_vault
+write_text "0123456789 0123456789" $test_home/b1
+vault-copy -b -a export $test_home/b1 $storage || error 22 "copy existed with $?"
