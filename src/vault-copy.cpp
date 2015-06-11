@@ -1,34 +1,41 @@
 #include "file-util.hpp"
 #include "vault-util.hpp"
-#include <qtaround/subprocess.hpp>
 #include <qtaround/error.hpp>
+#include <qtaround/os.hpp>
 #include <QCoreApplication>
 #include <set>
 
 namespace error = qtaround::error;
+namespace os = qtaround::os;
+
+QDebug & operator << (QDebug &dst, QFileInfo const &v)
+{
+    dst << str(v);
+    return dst;
+}
 
 enum class Action { Import = 0, Export };
 
 
-static cor::FdHandle copy_blob(Action action
-                               , std::string const &dst_path
-                               , Stat const &from
-                               , VaultHandle const &root)
+static FileHandle copy_blob(Action action
+                            , QString const &dst_path
+                            , QFileInfo const &from
+                            , VaultHandle const &root)
 {
     if (action == Action::Export) {
-        auto data_hash = root->hash_file(from.path());
+        auto data_hash = root->hash_file(from.filePath());
         auto data_dst_path = root->blob_path(data_hash);
-        Stat data_stat(data_dst_path);
+        QFileInfo data_stat(data_dst_path);
         if (!data_stat.exists()) {
-            auto blob_dir = dirname(data_dst_path);
-            mkdir(blob_dir, 0750);
+            auto blob_dir = os::path::dirName(data_stat);
+            mkdir(blob_dir, permissions::dirForUserOnly);
             copy_data(data_dst_path, from, nullptr);
         }
-        return rewrite(dst_path, data_hash, from.mode());
+        return rewrite(dst_path, data_hash, from.permissions());
     } else {
-        auto data_hash = read_text(from.path());
-        Stat data_stat(root->blob_path(data_hash));
-        auto mode = from.mode();
+        auto data_hash = read_text(from.filePath());
+        QFileInfo data_stat(root->blob_path(data_hash));
+        auto mode = from.permissions();
         return copy_data(dst_path, data_stat, &mode);
     }
 }
@@ -46,46 +53,43 @@ template <> struct RecordTraits<options_type> {
 };
 
 
-static Stat file_copy(Stat const &from, Stat const &parent
-                      , options_type const &options
-                      , Action action)
+static QFileInfo file_copy(QFileInfo const &from, QFileInfo const &parent
+                           , options_type const &options
+                           , Action action)
 {
     debug::debug("Copy file", from, parent);
-    auto dst_path = path(parent.path(), basename(from.path()));
-    Stat dst_stat{dst_path};
+    auto dst_path = path(parent.filePath(), os::path::baseName(from.filePath()));
+    QFileInfo dst_stat(dst_path);
     if (dst_stat.exists()) {
         if (options.get<Options::Overwrite>() == Overwrite::No) {
-            debug::debug("Do not overwrite", dst_stat.path());
+            debug::debug("Do not overwrite", dst_stat.filePath());
             return std::move(dst_stat);
         }
-        switch (dst_stat.file_type()) {
-        case FileType::File:
-            break;
-        case FileType::Symlink:
-            unlink(dst_stat.path());
-        default:
-            return std::move(dst_stat);
-            break;
+        if (!dst_stat.isFile()) {
+            if (dst_stat.isSymLink())
+                unlink(dst_stat.filePath());
+            else
+                return std::move(dst_stat);
         }
     }
-    auto mode = from.mode();
+    auto mode = from.permissions();
     auto dst = (options.get<Options::Data>() == DataHint::Big
                 ? copy_blob(action, dst_path, from
                             , options.get<Options::Vault>())
                 : copy_data(dst_path, from, &mode));
-    copy_utime(dst.value(), from);
-    dst.close();
+    copy_utime(*dst, from);
+    dst->close();
     dst_stat.refresh();
     return std::move(dst_stat);
 }
 
-enum class Context { Options, Action, SrcStat, DstStat, Last_ = DstStat };
+enum class Context { Options, Action, Src, Dst, Last_ = Dst };
 
 typedef Record<Context
-               , options_type, Action, Stat, Stat> context_type;
+               , options_type, Action, QFileInfo, QFileInfo> context_type;
 template <> struct RecordTraits<context_type> {
     RECORD_FIELD_NAMES(context_type
-                       , "Options", "Action", "SrcStat" , "DstStat");
+                       , "Options", "Action", "Src" , "Dst");
 };
 
 Action actionFromName(QString const &name)
@@ -124,12 +128,12 @@ void Processor::add(data_ptr const &p, End end)
             todo_.push_front(p);
     };
     auto const &opts = p->get<Context::Options>();
-    auto const &src_stat = p->get<Context::SrcStat>();
-    if (src_stat.file_type() == FileType::Dir) {
+    auto const &src_stat = p->get<Context::Src>();
+    if (src_stat.isDir()) {
         if (opts.get<Options::Depth>() == Depth::Recursive)
             push(p);
         else
-            debug::info("Omiting directory", src_stat.path());
+            debug::info("Omiting directory", src_stat.filePath());
     } else {
         push(p);
     }
@@ -138,50 +142,51 @@ void Processor::add(data_ptr const &p, End end)
 void Processor::execute()
 {
     auto onFile = [this](context_type const &ctx) {
-        auto const &src_stat = ctx.get<Context::SrcStat>();
-        auto const &tgt_stat = ctx.get<Context::DstStat>();
+        auto const &src_stat = ctx.get<Context::Src>();
+        auto const &tgt_stat = ctx.get<Context::Dst>();
+        debug::debug("File: ", src_stat);
         auto dst_stat = file_copy
         (src_stat, tgt_stat
          , ctx.get<Context::Options>()
          , ctx.get<Context::Action>());
     };
     auto onSymlink = [this](context_type const &ctx) {
-        auto const &src_stat = ctx.get<Context::SrcStat>();
-        //auto const &dst_stat = ctx.get<Context::DstStat>();
+        auto const &src = ctx.get<Context::Src>();
+        debug::debug("Symlink: ", src);
+        auto const &dst = ctx.get<Context::Dst>();
         auto const &opts = ctx.get<Context::Options>();
         if (opts.get<Options::Deref>() == Deref::Yes) {
-            auto new_path = readlink(src_stat.path());
+            auto new_path = readlink(src.filePath());
             auto new_ctx = std::make_shared<context_type>(ctx);
-            new_ctx->get<Context::SrcStat>() = Stat(new_path);
+            new_ctx->get<Context::Src>() = QFileInfo(new_path);
             this->add(new_ctx, End::Front);
         } else {
-            // TODO
+            symlink(readlink(src).filePath(), path(dst, src.fileName()));
         }
     };
     auto onDir = [this](context_type const &ctx) {
         auto const &options = ctx.get<Context::Options>();
-        auto const &src = ctx.get<Context::SrcStat>();
-        auto const &target = ctx.get<Context::DstStat>();
+        auto const &src = ctx.get<Context::Src>();
+        debug::debug("Dir: ", src);
+        auto const &target = ctx.get<Context::Dst>();
         auto dst = mkdir_similar(src, target);
         if (options.get<Options::Overwrite>() == Overwrite::Yes)
-            copy_utime(dst.path(), src);
+            copy_utime(dst.filePath(), src);
 
-        Dir d{src.path()};
-        while (d.next()) {
-            auto name = d.name();
-            if (name == "." || name == "..")
-                continue;
+        auto entries = QDir(src.filePath()).entryInfoList(QDir::NoDotAndDotDot);
+        while (!entries.isEmpty()) {
+            auto entry = entries.takeFirst();
 
-            debug::debug("Entry", d.name());
+            debug::debug("Entry", entry.baseName());
             auto item = std::make_shared<context_type>
                 (options, ctx.get<Context::Action>()
-                 , Stat(path(src, d.name())), dst);
+                 , QFileInfo(entry.filePath()), dst);
             this->add(item, End::Front);
         }
     };
     auto operationId = [](context_type const &ctx) {
-        return std::make_pair(ctx.get<Context::SrcStat>().id()
-                              , ctx.get<Context::DstStat>().id());
+        return std::make_pair(fileId(ctx.get<Context::Src>())
+                              , fileId(ctx.get<Context::Dst>()));
     };
     auto markVisited = [operationId, this](context_type const &ctx) {
         visited_.insert(operationId(ctx));
@@ -193,23 +198,19 @@ void Processor::execute()
     while (!todo_.empty()) {
         auto item = todo_.front();
         todo_.pop_front();
-        auto const &src_stat = item->get<Context::SrcStat>();
-        auto &dst_stat = item->get<Context::DstStat>();
-        debug::debug("Processing", src_stat.path());
-        dst_stat.refresh();
+        auto const &src = item->get<Context::Src>();
+        auto &dst = item->get<Context::Dst>();
+        debug::debug("Processing", src.filePath());
+        dst.refresh();
         if (!isVisited(*item)) {
-            switch (src_stat.file_type()) {
-            case FileType::Symlink:
+            if (src.isSymLink()) {
                 onSymlink(*item);
-                break;
-            case FileType::Dir:
+            } else if (src.isDir()) {
                 onDir(*item);
-                break;
-            case FileType::File:
+            } else if (src.isFile()) {
                 onFile(*item);
-                break;
-            default:
-                debug::debug("No handler for", src_stat.file_type());
+            } else {
+                debug::debug("No handler for the type", src.filePath());
                 break;
             }
             markVisited(*item);
@@ -258,10 +259,9 @@ int main_(int argc, char **argv)
     Processor processor;
     for (auto i = 0; i < last; ++i) {
         auto src = args[i];
+        debug::debug("Source", src);
         auto ctx = std::make_shared<context_type>
-            (options, action
-             , Stat(src.toStdString())
-             , Stat(dst.toStdString()));
+            (options, action, QFileInfo(src), QFileInfo(dst));
         processor.add(ctx);
     }
     processor.execute();

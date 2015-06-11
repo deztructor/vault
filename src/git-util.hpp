@@ -7,62 +7,57 @@
 #include <qtaround/subprocess.hpp>
 #include <qtaround/util.hpp>
 
-namespace cor {
+namespace qtaround {
+namespace git {
 
 template <typename ... Args>
-std::string join(std::string const &delim, Args&& ...args)
+QString join(QString const &delim, Args&& ...args)
 {
-    return cor::join(std::vector<std::string>{args...}, delim);
+    return QStringList({args...}).join(delim);
 }
-
-namespace git {
 
 class Tree {
 public:
-    Tree(std::string const &path);
-    std::string storage() const;
+    Tree(QString const &path);
+    QString storage() const;
 
     template <typename ... Args>
-    std::string storage(std::string const &arg1, Args&& ...args) const
+    QString storage(QString const &arg1, Args&& ...args) const
     {
         return path(storage(), arg1, std::forward<Args>(args)...);
     }
 
-    std::string execute(QStringList const &params);
+    QString execute(QStringList const &params);
 
     template <typename ... Args>
-    std::string execute(QString const &arg1, Args&& ...args)
+    QString execute(QString const &arg1, Args&& ...args)
     {
         return execute({arg1, std::forward<Args>(args)...});
     }
 
-    std::string hash_file(std::string const &path)
+    QString hash_file(QString const &path)
     {
-        return execute("hash-object", qstr(path));
+        return execute("hash-object", path);
     }
 
-    std::string blob_add(std::string const &path)
+    QString blob_add(QString const &path)
     {
-        return execute("hash-object", "-w", "-t", "blob", qstr(path));
+        return execute("hash-object", "-w", "-t", "blob", path);
     }
 
-    std::string index_add(std::string const &hash
-                                 , std::string const &name
-                                 , mode_t mode = 0100644)
-    {
-        auto cacheinfo = join(",", std::to_string(mode), hash, name);
-        return execute("update-index", "--add", "--cacheinfo", qstr(cacheinfo));
-    }
+    QString index_add(QString const &hash
+                      , QString const &name
+                      , mode_t mode = 0100644);
 
-    size_t blob_add(int src, size_t left_size, size_t max_chunk_size
-                    , std::string const &entry_name);
+    size_t blob_add(FileHandle const &src, size_t left_size
+                    , size_t max_chunk_size, QString const &entry_name);
     
-private:
-    static std::string resolve_storage(std::string const &root);
+protected:
+    static QString resolve_storage(QString const &root);
 
-    std::string root_;
+    QString root_;
     qtaround::subprocess::Process ps_;
-    mutable std::string storage_;
+    mutable QString storage_;
 };
 
 

@@ -1,212 +1,156 @@
 #include "file-util.hpp"
 #include <qtaround/error.hpp>
+#include <qtaround/os.hpp>
 #include <fstream>
 #include <fcntl.h>
 #include <sys/stat.h>
 
 namespace error = qtaround::error;
+namespace os = qtaround::os;
 
-std::string readlink(std::string const &p)
+QString path_normalize(QString const &path)
 {
-    char buf[PATH_MAX + 1];
-    auto s = ::readlink(p.c_str(), buf, sizeof(buf));
-    if (s < 0) {
-        auto err = errno;
-        if (err == EINVAL)
-            return p;
-        auto err_str = ::strerror(err);
-        error::raise({{"msg", "readlink error"}
-                , {"error", err_str ? err_str : "?"}});
+    auto res = path.simplified();
+    auto pos = res.size();
+    while (--pos) {
+        if (res[pos] != QChar('/'))
+            break;
     }
-    return std::string(s ? buf : "");
+    return (pos + 1 == res.size()) ? res : res.left(pos);
 }
 
-std::string path_normalize(std::string const &path)
+static void get_file_times(QString const &path, struct timespec *times)
 {
-    auto sz = path.size();
-    if (sz > 0) {
-        auto pos = path.find_last_not_of(" \t\n");
-        if (pos == std::string::npos) {
-            pos = sz - 1;
-        }
-        while (pos > 0) if (path[pos] == '/') --pos; else break;
-        return pos == sz - 1 ? path : path.substr(0, pos + 1);
-    } else {
-        return path;
-    }
+    struct stat stat;
+    auto data = path.toLocal8Bit();
+    int rc = ::stat(data.data(), &stat);
+    if (rc < 0)
+        raise_std_error({{"msg", "Can't get stat"}, {"path", path}});
+
+    ::memcpy(&times[0], &stat.st_atime, sizeof(times[0]));
+    ::memcpy(&times[1], &stat.st_mtime, sizeof(times[1]));
 }
 
-StatBase::StatBase(std::string const &path)
-    : path_(path_normalize(path))
-{
-    refresh();
-}
-
-void StatBase::refresh()
-{
-    auto rc = ::stat(path_.c_str(), &data_);
-    type_ = (rc == 0) ? FileType::Unknown : FileType::Absent;
-    if (type_ == FileType::Absent)
-        err_ = errno;
-}
-
-FileType StatBase::file_type() const
-{
-    if (type_ == FileType::Unknown) {
-        auto m = data_.st_mode;
-        type_ = (S_ISREG(m)
-                 ? FileType::File
-                 : (S_ISDIR(m)
-                    ? FileType::Dir
-                    : (S_ISLNK(m)
-                       ? FileType::Symlink
-                       : (S_ISSOCK(m)
-                          ? FileType::Socket
-                          : (S_ISCHR(m)
-                             ? FileType::Char
-                             : (S_ISBLK(m)
-                                ? FileType::Block
-                                : (S_ISFIFO(m)
-                                   ? FileType::Fifo
-                                   : FileType::Unknown)))))));
-        if (type_ == FileType::Unknown)
-            error::raise({{"msg", "Unknown file type"}
-                    , {"path", QString::fromStdString(path_)}
-                    , {"st_mode", m}});
-    }
-    return type_;
-}
-
-void StatBase::copy_stat(StatBase &dst)
-{
-    dst.type_ = type_;
-    dst.data_ = data_;
-    dst.err_ = err_;
-}
-
-void StatBase::ensure_exists() const
-{
-    if (!exists()) error::raise({
-            {"msg", "Logical error"}
-            , {"reason", "File doesn't exist"}});
-}
-
-struct stat *StatBase::data()
-{
-    ensure_exists();
-    return &data_;
-}
-
-struct stat const * StatBase::data() const
-{
-    ensure_exists();
-    return &data_;
-}
-
-void copy_utime(int fd, Stat const &src)
+static void copy_utime(int fd, QFileInfo const &src)
 {
     struct timespec times[2];
-    ::memcpy(&times[0], &src.data()->st_atime, sizeof(times[0]));
-    ::memcpy(&times[1], &src.data()->st_mtime, sizeof(times[1]));
+    get_file_times(src.filePath(), times);
     int rc = ::futimens(fd, times);
     if (rc < 0)
-        error::raise({{"msg", "Can't change time"}
-                , {"error", ::strerror(errno)}
-                , {"target", fd}});
+        raise_std_error({{"msg", "Can't change time"}, {"target", fd}});
 }
 
-void copy_utime(std::string const &target, Stat const &src)
+void copy_utime(QFile const &fd, QFileInfo const &src)
+{
+    return copy_utime(fd.handle(), src);
+}
+
+void copy_utime(QString const &target, QFileInfo const &src)
 {
     struct timespec times[2];
-    ::memcpy(&times[0], &src.data()->st_atime, sizeof(times[0]));
-    ::memcpy(&times[1], &src.data()->st_mtime, sizeof(times[1]));
-    int rc = ::utimensat(AT_FDCWD, target.c_str(), times, AT_SYMLINK_NOFOLLOW);
+    get_file_times(src.filePath(), times);
+    auto tgt_cs = target.toLocal8Bit();
+    int rc = ::utimensat(AT_FDCWD, tgt_cs.data(), times, AT_SYMLINK_NOFOLLOW);
     if (rc < 0)
-        error::raise({{"msg", "Can't change time"}
-                , {"error", ::strerror(errno)}
-                , {"target", qstr(target)}});
+        raise_std_error({{"msg", "Can't change time"}, {"target", target}});
 }
 
-void mkdir(std::string const &path, mode_t mode)
+void mkdir(QString const &path, FileMode)
 {
-    auto rc = ::mkdir(path.c_str(), mode);
-    if (rc < 0)
-        raise_std_error({{"msg", "Can't create dir"}
-                , {"path", qstr(path)}});
+    // TODO use path
+    auto parent = QFileInfo(path).dir();
+    if (parent.exists()) {
+        parent.mkdir(os::path::baseName(path));
+    }
 }
 
-Stat mkdir_similar(Stat const &from, Stat const &parent)
+QFileInfo mkdir_similar(QFileInfo const &from, QFileInfo const &parent)
 {
     if (!parent.exists())
-        error::raise({{"msg", "No parent dir"}, {"parent", qstr(parent)}});
+        error::raise({{"msg", "No parent dir"}, {"parent", str(parent)}});
 
-    auto dst_path = path(parent.path(), basename(from.path()));
-    debug::debug("mkdir", dst_path);
-    Stat dst_stat{dst_path};
+    auto dst_path = path(parent.filePath(), os::path::baseName(from.filePath()));
+    debug::debug("mkdir", dst_path, " similar to ", str(from));
+    QFileInfo dst_stat(dst_path);
     if (!dst_stat.exists()) {
-        mkdir(dst_path, from.mode());
+        mkdir(dst_path, from.permissions());
         dst_stat.refresh();
-    } else if (dst_stat.file_type() == FileType::Dir) {
+    } else if (dst_stat.isDir()) {
         debug::debug("Already exists", dst_path);
     } else {
         error::raise({{"msg", "Destination type is different"}
-                , {"src", qstr(from)}, {"parent", qstr(parent)}
-                , {"dst", qstr(dst_stat)}});
+                , {"src", str(from)}, {"parent", str(parent)}
+                , {"dst", str(dst_stat)}});
     }
     return std::move(dst_stat);
 }
 
-void unlink(std::string const &path)
+void unlink(QString const &path)
 {
-    auto rc = ::unlink(path.c_str());
+    auto data = path.toLocal8Bit();
+    auto rc = ::unlink(data.data());
     if (rc < 0)
-        error::raise({{"msg", "Can't unlink"}
-                , {"path", qstr(path)}
-                , {"error", ::strerror(errno)}});
+        raise_std_error({{"msg", "Can't unlink"}, {"path", path}});
 }
 
-void copy(cor::FdHandle &dst, cor::FdHandle &src, size_t left_size
-                 , ErrorCallback on_error)
+void copy(FileHandle const &dst, FileHandle const &src, size_t size, off_t off)
 {
-    int rc = ::ftruncate(dst.value(), left_size);
-    if (rc < 0)
-        on_error({{"msg", "Can't truncate"}});
+    auto p_src = mmap_create(nullptr, size, PROT_READ
+                                 , MAP_PRIVATE, src->handle(), off);
+    auto p_dst = mmap_create(nullptr, size, PROT_READ | PROT_WRITE
+                             , MAP_SHARED, dst->handle(), off);
+    memcpy(mmap_ptr(p_dst), mmap_ptr(p_src), size);
+}
 
-    rc = ::lseek(dst.value(), left_size, SEEK_SET);
-    if (rc < 0)
-        on_error({{"msg", "Can't expand"}});
+void copy(FileHandle &dst, FileHandle &src, size_t left_size
+          , ErrorCallback on_error)
+{
+    if (!dst->resize(left_size))
+        on_error({{"msg", "Can't resize"}, {"size", (unsigned)left_size}});
 
     static size_t max_chunk_size = 1024 * 1024;
     off_t off = 0;
     size_t size = left_size;
+    dst->resize(left_size);
     while (left_size) {
         size = (left_size > max_chunk_size) ? max_chunk_size : left_size;
-        auto p_src = mmap_create(nullptr, size, PROT_READ
-                                 , MAP_PRIVATE, src.value(), off);
-        auto p_dst = mmap_create(nullptr, size, PROT_READ | PROT_WRITE
-                                 , MAP_SHARED, dst.value(), off);
-        memcpy(mmap_ptr(p_dst), mmap_ptr(p_src), size);
+        copy(dst, src, size, off);
         left_size -= size;
         off += size;
     }
 }
 
-cor::FdHandle copy_data(std::string const &dst_path
-                        , Stat const &from, mode_t *pmode)
+mode_t toPosixMode(QFileDevice::Permissions perm)
 {
-    cor::FdHandle src(::open(from.path().c_str(), O_RDONLY));
-    if (!src.is_valid())
-        error::raise({{"msg", "Cant' open src file"}
-                , {"stat", qstr(from)}});
+    return (perm & QFileDevice::ReadOwner? 0600 : 0)
+        | (perm & QFileDevice::WriteOwner? 0400 : 0)
+        | (perm & QFileDevice::ExeOwner? 0200 : 0)
+        | (perm & QFileDevice::ReadGroup? 060 : 0)
+        | (perm & QFileDevice::WriteGroup? 040 : 0)
+        | (perm & QFileDevice::ExeGroup? 020 : 0)
+        | (perm & QFileDevice::ReadOther? 06 : 0)
+        | (perm & QFileDevice::WriteOther? 04 : 0)
+        | (perm & QFileDevice::ExeOther? 02 : 0);
+}
+
+FileHandle copy_data(QString const &dst_path
+                     , QFileInfo const &from, FileMode *pmode)
+{
+    debug::debug("Copy file data: ", str(from), "->", dst_path);
+    auto src = std::make_shared<QFile>(from.filePath());
+    if (!src->open(QIODevice::ReadOnly))
+        error::raise({{"msg", "Cant' open src file"}, {"stat", str(from)}});
     auto raise_dst_error = [&dst_path](QVariantMap const &info) {
-        error::raise(map({{"dst", qstr(dst_path)}
+        error::raise(map({{"dst", dst_path}
                     , {"error", ::strerror(errno)}}), info);
     };
+    auto dst = std::make_shared<QFile>(dst_path);
     auto flags = O_RDWR | O_CREAT;
-    cor::FdHandle dst(pmode
-                      ? ::open(dst_path.c_str(), flags, *pmode)
-                      : ::open(dst_path.c_str(), flags));
-    if (!dst.is_valid())
+    auto dst_cs = dst_path.toLocal8Bit();
+    auto fd = (pmode
+               ? ::open(dst_cs.data(), flags, toPosixMode(*pmode))
+               : ::open(dst_cs.data(), flags));
+    if (!dst->open(fd, QIODevice::ReadWrite))
         raise_dst_error({{"msg", "Cant' open dst file"}});
     using namespace std::placeholders;
     copy(dst, src, from.size(), std::bind(raise_dst_error, _1));
@@ -214,45 +158,52 @@ cor::FdHandle copy_data(std::string const &dst_path
 }
 
 
-cor::FdHandle rewrite(std::string const &dst_path
-                      , std::string const &text
-                      , mode_t mode)
+FileHandle rewrite(QString const &dst_path
+                   , QString const &text
+                   , FileMode mode)
 {
     auto flags = O_CREAT | O_TRUNC | O_WRONLY;
-    cor::FdHandle dst(::open(dst_path.c_str(), flags, mode)
-                      , cor::only_valid_handle);
-    auto written = ::write(dst.value(), text.c_str(), text.size());
+    auto fd = ::open(dst_path.toLocal8Bit(), flags, mode);
+    auto dst = std::make_shared<QFile>(dst_path);
+    if (!dst->open(fd, QIODevice::WriteOnly))
+        error::raise({{"msg", "Can't open dst"}, {"path", dst_path}});
+    auto written = dst->write(text.toLocal8Bit(), text.size());
     if (written != (long)text.size())
         error::raise({{"msg", "Error writing"}
                 , {"error", ::strerror(errno)}
-                , {"path", qstr(dst_path)}
-                , {"data", qstr(text)}
-                , {"res", qstr(written)}});
+                , {"path", dst_path}
+                , {"data", text}
+                , {"res", written}});
     return std::move(dst);
 }
 
-std::string read_text(std::string const &src_path)
+QString read_text(QString const &src_path)
 {
-    std::ifstream src(src_path);
-    std::string res{std::istreambuf_iterator<char>(src)
-            , std::istreambuf_iterator<char>()};
-    return res;
+    QFile f(src_path);
+    if (!f.open(QIODevice::ReadOnly))
+        error::raise({{"msg", "Can't open"}, {"path", src_path}});
+    return QString::fromUtf8(f.readAll());
 }
 
-QString loggable(QDebug const&, FileType t)
+void symlink(QString const &tgt, QString const &link)
 {
-    static const QString names[] = {
-        "Socket", "Symlink", "File", "Block", "Dir", "Char"
-        , "Fifo", "Absent", "Unknown"
-    };
-    static_assert(sizeof(names)/sizeof(names[0]) == cor::enum_size<FileType>() + 1
-                  , "Check names size");
-    return names[cor::enum_index(t)];
+    auto tgt_cs = tgt.toLocal8Bit();
+    auto link_cs = link.toLocal8Bit();
+    auto rc = ::symlink(tgt_cs.data(), link_cs.data());
+    if (rc < 0)
+        raise_std_error({{"msg", "Can't create link"}
+                , {"tgt", tgt}, {"link", link}});
 }
 
-QDebug & operator << (QDebug &dst, Stat const &src)
+QString readlink(QString const &path)
 {
-    dst << QString::fromStdString(src.path())
-        << "=(" << src.file_type() << ")";
-    return dst;
+    auto path_cs = path.toLocal8Bit();
+    char buf[PATH_MAX];
+    auto rc = ::readlink(path_cs, buf, sizeof(buf));
+    if (rc < 0)
+        raise_std_error({{"msg", "Can't read link"}, {"link", path}});
+    if (rc == sizeof(buf))
+        error::raise({{"msg", "Small buf reading link"}, {"path", path}});
+    buf[rc] = '\0';
+    return QString::fromLocal8Bit(buf);
 }

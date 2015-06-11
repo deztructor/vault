@@ -21,7 +21,7 @@
 
 namespace error = qtaround::error;
 namespace subprocess = qtaround::subprocess;
-namespace git = cor::git;
+namespace git = qtaround::git;
 
 #define SHA1_HASH_SIZE (40)
 
@@ -32,43 +32,40 @@ public:
         : git::Tree(find_root(path))
     {}
 
-    std::string root() const { return root_; }
-    std::string blobs() const;
-    std::string blob_path(std::string const &) const;
+    QString root() const { return root_; }
+    QString blobs() const;
+    QString blob_path(QString const &) const;
 private:
-
-    std::string find_root(QString const &path);
-    std::string root_;
-    mutable std::string storage_;
+    QString find_root(QString const &path);
 };
 
 typedef std::shared_ptr<Vault> VaultHandle;
 
 QDebug & operator << (QDebug &dst, Vault const &v)
 {
-    dst << "Vault[" << qstr(v.root()) << "]";
+    dst << "Vault[" << v.root() << "]";
     return dst;
 }
 
-std::string Vault::find_root(QString const &path)
+QString Vault::find_root(QString const &path)
 {
     subprocess::Process ps;
-    ps.setWorkingDirectory(path);
-    auto res = qstr(ps.check_output("git-vault-root", {})).trimmed();
-    return res.toStdString();
+    QFileInfo info(path);
+    ps.setWorkingDirectory(info.isDir() ? path : info.path());
+    return ps.check_output("git-vault-root", {}).trimmed();
 }
 
-std::string Vault::blobs() const
+QString Vault::blobs() const
 {
     return storage("blobs");
 }
 
-std::string Vault::blob_path(std::string const &hash) const
+QString Vault::blob_path(QString const &hash) const
 {
     if (hash.size() != SHA1_HASH_SIZE)
-        error::raise({{"msg", "Wrong hash"}, {"hash", qstr(hash)}});
+        error::raise({{"msg", "Wrong hash"}, {"hash", hash}});
 
-    return path(blobs(), hash.substr(0, 2), hash.substr(2));
+    return path(blobs(), hash.mid(0, 2), hash.mid(2));
 }
 
 

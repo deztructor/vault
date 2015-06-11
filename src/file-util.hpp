@@ -2,162 +2,91 @@
 #define _FILE_UTIL_HPP_
 
 #include "common-util.hpp"
-#include <cor/util.hpp>
+#include <qtaround/os.hpp>
 #include <string>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <libgen.h>
 
-enum class FileType : char {
-    First_ = 0,
-        Socket = First_, Symlink, File, Block, Dir, Char, Fifo,
-        Absent, Last_ = Absent, Unknown
-};
+namespace qtaround { namespace os {
 
-class StatBase {
-public:
-    explicit StatBase(std::string const&);
-    StatBase(StatBase &&) = default;
-    StatBase(StatBase const &) = default;
-    StatBase& operator = (StatBase &&) = default;
-    StatBase& operator = (StatBase const&) = default;
+namespace path {
 
-    bool exists() const { return type_ != FileType:: Absent; }
-    struct stat *data();
-    struct stat const * data() const;
-    void refresh();
-    void copy_stat(StatBase &);
-    FileType file_type() const;
+inline QString dirName(QFileInfo const &info)
+{
+    return info.dir().path();
+}
 
-    std::string path_;
-private:
-    void ensure_exists() const;
+}
 
-    mutable FileType type_;
-    int err_;
-    struct stat data_;
-};
+}}
+
+typedef std::shared_ptr<QFile> FileHandle;
 
 struct FileId
 {
-    FileId(struct stat const &src)
-        : st_dev(src.st_dev), st_ino(src.st_ino)
+    FileId(QFileInfo const &info)
+        : path_(info.canonicalPath())
     {}
-    dev_t st_dev;
-    ino_t st_ino;
+    QString path_;
 };
 
-class Stat : private StatBase {
-public:
-    Stat(std::string const &path) : StatBase(path) {}
-    Stat(Stat &&) = default;
-    Stat(Stat const&) = default;
-    Stat& operator = (Stat &&) = default;
-    Stat& operator = (Stat const &) = default;
+QString path_normalize(QString const &);
 
-    void copy_stat(Stat &dst) {
-        StatBase::copy_stat(static_cast<StatBase &>(dst));
-    }
-    FileType file_type() const { return StatBase::file_type(); }
-    bool exists() const { return StatBase::exists(); }
-    void refresh() { StatBase::refresh(); }
-    std::string path() const { return path_; }
-    struct stat const * data() const { return StatBase::data(); }
-    FileId id() const { return FileId(*data()); }
-    off_t size() const { return data()->st_size; }
-    mode_t mode() const { return data()->st_mode; }
-};
+inline QString str(QFileInfo const &info)
+{
+    return info.filePath();
+}
 
-
-class Dir {
-public:
-    Dir(std::string const &name)
-        : dir_(::opendir(name.c_str()))
-        , entry_(nullptr)
-    {}
-
-    bool next()
-    {
-        bool res = false;
-        if (dir_) {
-            entry_ = ::readdir(dir_);
-            res = (entry_ != nullptr);
-        }
-        return res;
-    }
-
-    std::string name() const
-    {
-        return entry_ ? entry_->d_name : "";
-    }
-
-    ~Dir() {
-        if (dir_) ::closedir(dir_);
-    }
-private:
-    DIR *dir_;
-    struct dirent *entry_;
-};
-
-std::string path_normalize(std::string const &);
-std::string readlink(std::string const &);
+QString readlink(QString const &path);
 
 namespace {
 
-inline Stat readlink(Stat const &from)
+inline QFileInfo readlink(QFileInfo const &from)
 {
-    auto resolved = readlink(from.path());
-    return Stat(resolved);
+    return QFileInfo(readlink(from.filePath()));
 }
 
-inline std::string basename(std::string const &path)
+inline QString path(std::initializer_list<QString> parts)
 {
-    auto str = strdup_unique(path.c_str());
-    auto res = ::basename(str.get());
-    return res ? res : "";
-}
-
-inline std::string dirname(std::string const &path)
-{
-    auto str = strdup_unique(path.c_str());
-    auto res = ::dirname(str.get());
-    return res ? res : "";
-}
-
-inline std::string path(std::initializer_list<std::string> parts)
-{
-    return cor::join(std::move(parts), "/");
+    return QStringList(parts).join("/");
 }
 
 template <typename ... Args>
-std::string path(std::string v, Args&& ...args)
+QString path(QString v, Args&& ...args)
 {
     return path({v, args...});
 }
 
 template <typename ... Args>
-std::string path(Stat const &root, Args&& ...args)
+QString path(QFileInfo const &root, Args&& ...args)
 {
-    return path({root.path(), args...});
+    return path({root.filePath(), args...});
 }
 
 }
 
 inline bool operator == (FileId const &a, FileId const &b)
 {
-    return (a.st_dev == b.st_dev) && (a.st_ino == b.st_ino);
+    return (a.path_ == b.path_);
 }
 
 inline bool operator < (FileId const &a, FileId const &b)
 {
-    return (a.st_dev < b.st_dev) || (a.st_ino < b.st_ino);
+    return (a.path_ < b.path_);
 }
 
-inline bool operator == (Stat const &a, Stat const &b)
+inline FileId fileId(QFileInfo const &from)
 {
-    return a.exists() && b.exists() && a.id() == b.id();
+    if (!from.exists())
+        error::raise({{"msg", "Can't create FileId"}, {"path", str(from)}});
+    return FileId(from);
 }
 
+inline bool operator == (QFileInfo const &a, QFileInfo const &b)
+{
+    return a.exists() && b.exists() && fileId(a) == fileId(b);
+}
 
 struct MMap {
     MMap(void *pp, size_t l) : p(pp), len(l) { }
@@ -190,61 +119,68 @@ inline void *mmap_ptr(MMapHandle const &p)
 
 }
 
-void copy_utime(int target_fd, Stat const &src);
-void copy_utime(std::string const &target, Stat const &src);
-Stat mkdir_similar(Stat const &from, Stat const &parent);
-void unlink(std::string const &path);
-void copy(cor::FdHandle &dst, cor::FdHandle &src, size_t left_size
+typedef QFile::Permissions FileMode;
+namespace permissions {
+static const FileMode dirForUserOnly =
+    (QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+}
+
+mode_t toPosixMode(QFileDevice::Permissions perm);
+
+void copy_utime(QFile const &fd, QFileInfo const &src);
+void copy_utime(QString const &target, QFileInfo const &src);
+QFileInfo mkdir_similar(QFileInfo const &from, QFileInfo const &parent);
+void unlink(QString const &path);
+void copy(FileHandle &dst, FileHandle &src, size_t left_size
           , ErrorCallback on_error);
-cor::FdHandle copy_data(std::string const &dst_path
-                        , Stat const &from, mode_t *pmode);
-cor::FdHandle rewrite(std::string const &dst_path
-                      , std::string const &text
-                      , mode_t mode);
-std::string read_text(std::string const &src_path);
-void mkdir(std::string const &path, mode_t mode);
+FileHandle copy_data(QString const &dst_path
+                     , QFileInfo const &from, FileMode *pmode);
+FileHandle rewrite(QString const &dst_path
+                   , QString const &text
+                   , FileMode mode);
+QString read_text(QString const &src_path);
+void mkdir(QString const &path, FileMode mode);
+
+void copy(FileHandle const &dst, FileHandle const &src, size_t size, off_t off);
+
+template <typename T>
+FileHandle fileHandle(std::shared_ptr<T> const &from)
+{
+    return std::static_pointer_cast<QFile>(from);
+}
+
+void symlink(QString const &tgt, QString const &link);
 
 // -----------------------------------------------------------------------------
 
-inline QString qstr(Stat const &v)
-{
-    return qstr(v.path());
-}
 
-inline QString loggable(QDebug const&, Stat const &v)
+inline QDebug & operator << (QDebug &d, FileId const &s)
 {
-    return qstr(v);
-}
-
-inline QString loggable(QDebug const&, FileId const &s)
-{
-    return QString("(Node: %1 %2)").arg(s.st_dev).arg(s.st_ino);
+    d << "Node: " << s.path_;
+    return d;
 }
 
 template <typename T1, typename T2>
-QString loggable(QDebug const &d, std::pair<T1, T2> const &s)
+QDebug & operator << (QDebug &d, std::pair<T1, T2> const &s)
 {
-    return QString("(%1 %2)").arg(loggable(d, s.first)).arg(loggable(d, s.second));
+    d << "(" << s.first << ", " << s.second << ")";
+    return d;
 }
 
-QString loggable(QDebug const&, FileType t);
+// inline QString get_fname(int fd)
+// {
+//     auto fd_path = path("/proc/self/fd", std::to_string(fd));
+//     return read_text(fd_path);
+// }
 
-QDebug & operator << (QDebug &dst, Stat const &src);
+// struct CFileTraits
+// {
+//     typedef FILE * handle_type;
+//     void close_(handle_type v) { ::fclose(v); }
+//     bool is_valid_(handle_type v) const { return v != nullptr; }
+//     FILE* invalid_() const { return nullptr; }
+// };
 
-inline std::string get_fname(int fd)
-{
-    auto fd_path = path("/proc/self/fd", std::to_string(fd));
-    return read_text(fd_path);
-}
-
-struct CFileTraits
-{
-    typedef FILE * handle_type;
-    void close_(handle_type v) { ::fclose(v); }
-    bool is_valid_(handle_type v) const { return v != nullptr; }
-    FILE* invalid_() const { return nullptr; }
-};
-
-typedef cor::Handle<CFileTraits> CFileHandle;
+// typedef cor::Handle<CFileTraits> CFileHandle;
 
 #endif // _FILE_UTIL_HPP_

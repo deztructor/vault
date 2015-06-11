@@ -35,31 +35,6 @@ inline QCommandLineParser & operator <<
     return parser;
 }
 
-inline QString qstr(int v)
-{
-    return QString::number(v);
-}
-
-inline QString qstr(char const *v)
-{
-    return QString(v);
-}
-
-inline QString qstr(std::string const &s)
-{
-    return QString::fromStdString(s);
-}
-
-inline QString qstr(QByteArray const &s)
-{
-    return QString::fromUtf8(s);
-}
-
-inline QString loggable(QDebug const&, std::string const &s)
-{
-    return qstr(s);
-}
-
 template <typename T>
 bool is_valid(T v, typename std::enable_if<std::is_enum<T>::value>::type* = 0)
 {
@@ -82,12 +57,6 @@ QDebug & operator << (QDebug &dst, std::shared_ptr<T> const &p)
     if (p) dst << *p; else dst << "null";
     dst << ")";
     return dst;
-}
-
-typedef std::unique_ptr<char, void (*)(char *)> cstring_handle;
-static cstring_handle strdup_unique(char const *from)
-{
-    return cstring_handle(::strdup(from), [](char *p) { ::free(p); });
 }
 
 typedef std::function<void (QVariantMap const&)> ErrorCallback;
