@@ -20,9 +20,13 @@ source $lib_dir/vault-misc
 cur_test="Begin"
 test_set_num=0
 function NEXT_TEST {
-    trace $@
+    trace "TEST: $@"
     test_set_num=$(expr $test_set_num + 1)
     cur_test=$1
+}
+
+function test_step {
+    trace "STEP: $@"
 }
 
 function test_failed {
