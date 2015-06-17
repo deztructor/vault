@@ -19,16 +19,41 @@ QString path_normalize(QString const &path)
     return (pos + 1 == res.size()) ? res : res.left(pos);
 }
 
+static int get_stat(QString const &path, struct stat &stat)
+{
+    auto data = path.toLocal8Bit();
+    return ::lstat(data.data(), &stat);
+}
+
+static void get_stat_or_fail(QString const &path, struct stat &stat)
+{
+    int rc = get_stat(path, stat);
+    if (rc < 0)
+        raise_std_error({{"msg", "Can't get stat"}, {"path", path}});
+}
+
 static void get_file_times(QString const &path, struct timespec *times)
 {
     struct stat stat;
-    auto data = path.toLocal8Bit();
-    int rc = ::stat(data.data(), &stat);
-    if (rc < 0)
-        raise_std_error({{"msg", "Can't get stat"}, {"path", path}});
-
+    get_stat_or_fail(path, stat);
     ::memcpy(&times[0], &stat.st_atime, sizeof(times[0]));
     ::memcpy(&times[1], &stat.st_mtime, sizeof(times[1]));
+}
+
+FileId fileId(QString const &from)
+{
+    struct stat stat;
+    get_stat_or_fail(from, stat);
+    FileId res(stat);
+    debug::debug("fileId for", from, "=", res);
+    return std::move(res);
+}
+
+FileId fileId(QFileInfo const &from)
+{
+    if (!exists(from))
+        error::raise({{"msg", "Can't create FileId"}, {"path", str(from)}});
+    return fileId(from.filePath());
 }
 
 static void copy_utime(int fd, QFileInfo const &src)
@@ -58,25 +83,32 @@ void copy_utime(QString const &target, QFileInfo const &src)
 void mkdir(QString const &path, FileMode)
 {
     // TODO use path
-    auto parent = QFileInfo(path).dir();
+    QFileInfo info(path);
+    auto parent = info.dir();
     if (parent.exists()) {
-        parent.mkdir(os::path::baseName(path));
+        parent.mkdir(info.fileName());
     }
 }
 
-QFileInfo mkdir_similar(QFileInfo const &from, QFileInfo const &parent)
+QFileInfo mkdir_similar(QFileInfo const &from
+                        , QFileInfo const &parent
+                        , CopyTime copy_time)
 {
     if (!parent.exists())
         error::raise({{"msg", "No parent dir"}, {"parent", str(parent)}});
 
-    auto dst_path = path(parent.filePath(), os::path::baseName(from.filePath()));
+    auto dst_path = path(parent.filePath(), from.fileName());
     debug::debug("mkdir", dst_path, " similar to ", str(from));
     QFileInfo dst_stat(dst_path);
-    if (!dst_stat.exists()) {
+    if (!exists(dst_stat)) {
         mkdir(dst_path, from.permissions());
+        if (copy_time == CopyTime::NewOnly)
+            copy_utime(dst_path, from);
         dst_stat.refresh();
     } else if (dst_stat.isDir()) {
         debug::debug("Already exists", dst_path);
+        if (copy_time == CopyTime::Always)
+            copy_utime(dst_path, from);
     } else {
         error::raise({{"msg", "Destination type is different"}
                 , {"src", str(from)}, {"parent", str(parent)}
@@ -105,15 +137,41 @@ void copy(FileHandle const &dst, FileHandle const &src, size_t size, off_t off)
 void copy(FileHandle &dst, FileHandle &src, size_t left_size
           , ErrorCallback on_error)
 {
-    if (!dst->resize(left_size))
+    int rc = ::ftruncate(dst->handle(), left_size);
+    if (rc < 0)
         on_error({{"msg", "Can't resize"}, {"size", (unsigned)left_size}});
 
+    auto off = ::lseek(dst->handle(), left_size, SEEK_SET);
+    if (off < 0)
+        on_error({{"msg", "Can't seek"}, {"size", (unsigned)left_size}});
+
+    // goto beginning
+    off = ::lseek(src->handle(), 0, SEEK_SET);
+    if (off < 0)
+        on_error({{"msg", "Can't goto beginning"}});
+
     static size_t max_chunk_size = 1024 * 1024;
-    off_t off = 0;
     size_t size = left_size;
-    dst->resize(left_size);
+
     while (left_size) {
-        size = (left_size > max_chunk_size) ? max_chunk_size : left_size;
+        auto prev_off = off;
+        off = ::lseek(src->handle(), prev_off, SEEK_DATA);
+        if (off < 0)
+            on_error({{"msg", "Can't find data"}});
+
+        auto delta = off - prev_off;
+        if ((size_t)delta > left_size)
+            return;
+        left_size -= delta;
+        auto off_hole = ::lseek(src->handle(), off, SEEK_HOLE);
+        if (off_hole < 0)
+            on_error({{"msg", "Can't find hole"}, {"off", (unsigned)prev_off}});
+        delta = off_hole - off;
+        size = ((size_t)delta < max_chunk_size
+                ? delta
+                : (left_size > max_chunk_size
+                   ? max_chunk_size
+                   : left_size));
         copy(dst, src, size, off);
         left_size -= size;
         off += size;
@@ -133,10 +191,17 @@ mode_t toPosixMode(QFileDevice::Permissions perm)
         | (perm & QFileDevice::ExeOther? 02 : 0);
 }
 
+inline int open_qs(QString const &name, int flags, mode_t mode)
+{
+    auto data = name.toLocal8Bit();
+    return ::open(data.data(), flags, mode);
+}
+
 FileHandle copy_data(QString const &dst_path
                      , QFileInfo const &from, FileMode *pmode)
 {
-    debug::debug("Copy file data: ", str(from), "->", dst_path);
+    debug::debug("Copy file data: ", str(from), "->", dst_path
+                 , "mode", (pmode ? *pmode : -1));
     auto src = std::make_shared<QFile>(from.filePath());
     if (!src->open(QIODevice::ReadOnly))
         error::raise({{"msg", "Cant' open src file"}, {"stat", str(from)}});
@@ -146,11 +211,12 @@ FileHandle copy_data(QString const &dst_path
     };
     auto dst = std::make_shared<QFile>(dst_path);
     auto flags = O_RDWR | O_CREAT;
-    auto dst_cs = dst_path.toLocal8Bit();
     auto fd = (pmode
-               ? ::open(dst_cs.data(), flags, toPosixMode(*pmode))
-               : ::open(dst_cs.data(), flags));
-    if (!dst->open(fd, QIODevice::ReadWrite))
+               ? open_qs(dst_path, flags, toPosixMode(*pmode))
+               : open_qs(dst_path, flags, 0640));
+    if (fd < 0)
+        raise_dst_error({{"msg", "Can't open/create file"}});
+    if (!dst->open(fd, QIODevice::ReadWrite, QFileDevice::AutoCloseHandle))
         raise_dst_error({{"msg", "Cant' open dst file"}});
     using namespace std::placeholders;
     copy(dst, src, from.size(), std::bind(raise_dst_error, _1));
@@ -163,9 +229,9 @@ FileHandle rewrite(QString const &dst_path
                    , FileMode mode)
 {
     auto flags = O_CREAT | O_TRUNC | O_WRONLY;
-    auto fd = ::open(dst_path.toLocal8Bit(), flags, mode);
+    auto fd = ::open(dst_path.toLocal8Bit(), flags, toPosixMode(mode));
     auto dst = std::make_shared<QFile>(dst_path);
-    if (!dst->open(fd, QIODevice::WriteOnly))
+    if (!dst->open(fd, QIODevice::WriteOnly, QFileDevice::AutoCloseHandle))
         error::raise({{"msg", "Can't open dst"}, {"path", dst_path}});
     auto written = dst->write(text.toLocal8Bit(), text.size());
     if (written != (long)text.size())
@@ -177,11 +243,14 @@ FileHandle rewrite(QString const &dst_path
     return std::move(dst);
 }
 
-QString read_text(QString const &src_path)
+QString read_text(QString const &src_path, long long max_acceptable_size)
 {
     QFile f(src_path);
     if (!f.open(QIODevice::ReadOnly))
         error::raise({{"msg", "Can't open"}, {"path", src_path}});
+    if (f.size() > max_acceptable_size)
+        error::raise({{"msg", "File is too big"}, {"path", src_path}
+                , {"size", f.size()}});
     return QString::fromUtf8(f.readAll());
 }
 
@@ -206,4 +275,21 @@ QString readlink(QString const &path)
         error::raise({{"msg", "Small buf reading link"}, {"path", path}});
     buf[rc] = '\0';
     return QString::fromLocal8Bit(buf);
+}
+
+bool exists(QFileInfo const &path)
+{
+    struct stat stat;
+    int rc = get_stat(path.filePath(), stat);
+    bool res;
+    if (rc < 0) {
+        int err = errno;
+        if (err == ENOENT || err == ENOTDIR)
+            res = false;
+        else
+            raise_std_error({{"msg", "Failed to get stat"}, {"path", str(path)}});
+    } else {
+        res = true;
+    }
+    return res;
 }

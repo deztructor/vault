@@ -25,8 +25,10 @@ function NEXT_TEST {
     cur_test=$1
 }
 
+cur_test_step=
 function test_step {
-    trace "STEP: $@"
+    cur_test_step=$1
+    trace "STEP: $cur_test/$1"
 }
 
 function test_failed {
@@ -35,7 +37,7 @@ function test_failed {
     echo '} stderr {' >&2;
     cat $test_err >&2;
     echo '}' >&2;
-    error $1 "Test: $cur_test." ${@:2}
+    error $1 "Test: $cur_test($cur_test_step)" ${@:2}
 }
 
 function check_is_vault_storage {

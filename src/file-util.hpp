@@ -23,13 +23,29 @@ inline QString dirName(QFileInfo const &info)
 
 typedef std::shared_ptr<QFile> FileHandle;
 
-struct FileId
+class FileId
 {
-    FileId(QFileInfo const &info)
-        : path_(info.canonicalPath())
+public:
+    FileId(struct stat const &src)
+        : st_dev(src.st_dev), st_ino(src.st_ino)
     {}
-    QString path_;
+
+    dev_t st_dev;
+    ino_t st_ino;
 };
+
+FileId fileId(QFileInfo const &from);
+FileId fileId(QString const &from);
+
+inline bool operator == (FileId const &a, FileId const &b)
+{
+    return (a.st_dev == b.st_dev) && (a.st_ino == b.st_ino);
+}
+
+inline bool operator < (FileId const &a, FileId const &b)
+{
+    return (a.st_dev < b.st_dev) || (a.st_ino < b.st_ino);
+}
 
 QString path_normalize(QString const &);
 
@@ -39,6 +55,7 @@ inline QString str(QFileInfo const &info)
 }
 
 QString readlink(QString const &path);
+bool exists(QFileInfo const &path);
 
 namespace {
 
@@ -64,23 +81,6 @@ QString path(QFileInfo const &root, Args&& ...args)
     return path({root.filePath(), args...});
 }
 
-}
-
-inline bool operator == (FileId const &a, FileId const &b)
-{
-    return (a.path_ == b.path_);
-}
-
-inline bool operator < (FileId const &a, FileId const &b)
-{
-    return (a.path_ < b.path_);
-}
-
-inline FileId fileId(QFileInfo const &from)
-{
-    if (!from.exists())
-        error::raise({{"msg", "Can't create FileId"}, {"path", str(from)}});
-    return FileId(from);
 }
 
 inline bool operator == (QFileInfo const &a, QFileInfo const &b)
@@ -129,7 +129,10 @@ mode_t toPosixMode(QFileDevice::Permissions perm);
 
 void copy_utime(QFile const &fd, QFileInfo const &src);
 void copy_utime(QString const &target, QFileInfo const &src);
-QFileInfo mkdir_similar(QFileInfo const &from, QFileInfo const &parent);
+enum class CopyTime { Never, Always, NewOnly };
+QFileInfo mkdir_similar(QFileInfo const &from
+                        , QFileInfo const &parent
+                        , CopyTime copy_time);
 void unlink(QString const &path);
 void copy(FileHandle &dst, FileHandle &src, size_t left_size
           , ErrorCallback on_error);
@@ -138,7 +141,7 @@ FileHandle copy_data(QString const &dst_path
 FileHandle rewrite(QString const &dst_path
                    , QString const &text
                    , FileMode mode);
-QString read_text(QString const &src_path);
+QString read_text(QString const &src_path, long long max_acceptable_size);
 void mkdir(QString const &path, FileMode mode);
 
 void copy(FileHandle const &dst, FileHandle const &src, size_t size, off_t off);
@@ -156,7 +159,7 @@ void symlink(QString const &tgt, QString const &link);
 
 inline QDebug & operator << (QDebug &d, FileId const &s)
 {
-    d << "Node: " << s.path_;
+    d << "(Node: " << s.st_dev << ", " << s.st_ino << ")";
     return d;
 }
 

@@ -51,7 +51,9 @@ QString Vault::find_root(QString const &path)
 {
     subprocess::Process ps;
     QFileInfo info(path);
-    ps.setWorkingDirectory(info.isDir() ? path : info.path());
+    auto wd = info.isDir() ? path : info.path();
+    debug::debug("find root for", wd);
+    ps.setWorkingDirectory(wd);
     return ps.check_output("git-vault-root", {}).trimmed();
 }
 

@@ -32,7 +32,7 @@ QString Tree::resolve_storage(QString const &root)
     if (dotgit.isDir()) {
         res = dotgit.filePath();
     } else if (dotgit.isFile()) {
-        auto data = read_text(dotgit.filePath());
+        auto data = read_text(dotgit.filePath(), 1024);
         static const QString prefix{"gitdir: "};
         if (data.mid(0, prefix.size()) != prefix)
             error::raise({{"msg", "Wrong .git data"}, {"data", data}});
