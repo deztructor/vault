@@ -53,7 +53,12 @@ set_target_properties(vault-transfer PROPERTIES
   )
 install(TARGETS vault-transfer DESTINATION ${DST_LIB})
 
-add_executable(vault-sync vault-sync.cpp git-util.cpp file-util.cpp)
+add_executable(vault-sync
+  vault-sync.cpp
+  git-util.cpp
+  file-util.cpp
+  vault-util.cpp
+  )
 qt5_use_modules(vault-sync Core)
 target_link_libraries(vault-sync
   ${QTAROUND_LIBRARIES}

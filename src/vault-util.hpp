@@ -41,34 +41,15 @@ private:
 
 typedef std::shared_ptr<Vault> VaultHandle;
 
-QDebug & operator << (QDebug &dst, Vault const &v)
+inline QDebug & operator << (QDebug &dst, Vault const &v)
 {
     dst << "Vault[" << v.root() << "]";
     return dst;
 }
 
-QString Vault::find_root(QString const &path)
-{
-    subprocess::Process ps;
-    QFileInfo info(path);
-    auto wd = info.isDir() ? path : info.path();
-    debug::debug("find root for", wd);
-    ps.setWorkingDirectory(wd);
-    return ps.check_output("git-vault-root", {}).trimmed();
-}
-
-QString Vault::blobs() const
+inline QString Vault::blobs() const
 {
     return storage("blobs");
 }
-
-QString Vault::blob_path(QString const &hash) const
-{
-    if (hash.size() != SHA1_HASH_SIZE)
-        error::raise({{"msg", "Wrong hash"}, {"hash", hash}});
-
-    return path(blobs(), hash.mid(0, 2), hash.mid(2));
-}
-
 
 #endif // _VAULT_UTIL_HPP_
