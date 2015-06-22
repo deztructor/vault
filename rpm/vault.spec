@@ -48,7 +48,7 @@ Requires:   %{name} = %{version}-%{release}
 %define tools_dir %{_libexecdir}/vault
 
 %build
-%cmake -DVERSION=%{version} %{?_with_multiarch:-DENABLE_MULTIARCH=ON} -DTOOLS_DIR=%{tools_dir}
+%cmake -DVERSION=%{version} %{?_with_multiarch:-DENABLE_MULTIARCH=ON} -DTOOLS_DIR=%{tools_dir} -DCMAKE_BUILD_TYPE=Release
 make %{?jobs:-j%jobs}
 
 %install
@@ -67,6 +67,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/libvault-core.so*
 %{_libdir}/libvault-transfer.so*
 %{_libdir}/libvault-unit.so*
+%{_libdir}/libvault-sync.so*
 %dir %{_libdir}/qt5/qml/NemoMobile/Vault
 %{_libdir}/qt5/qml/NemoMobile/Vault/*
 %{_bindir}/vault

@@ -19,6 +19,7 @@ QString join(QString const &delim, Args&& ...args)
 class Tree {
 public:
     Tree(QString const &path);
+    virtual ~Tree();
     QString storage() const;
 
     template <typename ... Args>

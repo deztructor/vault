@@ -1,6 +1,11 @@
 #include "config.hpp"
 #include "vault-util.hpp"
 
+#include <qtaround/subprocess.hpp>
+
+namespace error = qtaround::error;
+namespace subprocess = qtaround::subprocess;
+
 QString Vault::find_root(QString const &path)
 {
     subprocess::Process ps;

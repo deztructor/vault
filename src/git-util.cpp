@@ -19,6 +19,10 @@ Tree::Tree(QString const &path)
     ps_.setWorkingDirectory(root_);
 }
 
+Tree::~Tree()
+{
+}
+
 QString Tree::execute(QStringList const &params)
 {
     auto out = ps_.check_output("git", {params});
