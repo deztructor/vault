@@ -29,10 +29,11 @@ static FileHandle copy_blob(Action action
             mkdir(blob_dir, permissions::dirForUserOnly);
             copy_data(data_dst_path, from, nullptr);
         }
-        return rewrite(dst_path, data_hash, from.permissions());
+        return rewrite(dst_path, root->uri_from_hash(data_hash)
+                       , from.permissions());
     } else {
-        auto data_hash = read_text(from.filePath(), SHA1_HASH_SIZE + sizeof('\n'));
-        QFileInfo data_stat(root->blob_path(data_hash));
+        auto data_uri = read_text(from.filePath(), VAULT_URI_MAX_SIZE).trimmed();
+        QFileInfo data_stat(root->path_from_uri(data_uri));
         auto mode = from.permissions();
         return copy_data(dst_path, data_stat, &mode);
     }

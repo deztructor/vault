@@ -50,6 +50,7 @@ function on_failure
         is_failed=true
     fi
 }
+trap on_failure INT
 trap on_failure TERM
 trap on_normal_exit EXIT
 #trap on_failure ERR

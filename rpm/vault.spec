@@ -72,6 +72,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/qt5/qml/NemoMobile/Vault/*
 %{_bindir}/vault
 %{_bindir}/vault-sync
+%{_bindir}/vault-resolve
 %dir %{tools_dir}
 %{tools_dir}/*
 %if 0%{?_with_usersession:1}

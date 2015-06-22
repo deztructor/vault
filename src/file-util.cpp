@@ -127,6 +127,8 @@ void unlink(QString const &path)
 
 void copy(FileHandle const &dst, FileHandle const &src, size_t size, off_t off)
 {
+    if (!size)
+        return;
     auto p_src = mmap_create(nullptr, size, PROT_READ
                                  , MAP_PRIVATE, src->handle(), off);
     auto p_dst = mmap_create(nullptr, size, PROT_READ | PROT_WRITE
@@ -243,15 +245,12 @@ FileHandle rewrite(QString const &dst_path
     return std::move(dst);
 }
 
-QString read_text(QString const &src_path, long long max_acceptable_size)
+QString read_text(QString const &src_path, long long max_size)
 {
     QFile f(src_path);
     if (!f.open(QIODevice::ReadOnly))
         error::raise({{"msg", "Can't open"}, {"path", src_path}});
-    if (f.size() > max_acceptable_size)
-        error::raise({{"msg", "File is too big"}, {"path", src_path}
-                , {"size", f.size()}});
-    return QString::fromUtf8(f.readAll());
+    return QString::fromUtf8(f.read(max_size));
 }
 
 void symlink(QString const &tgt, QString const &link)

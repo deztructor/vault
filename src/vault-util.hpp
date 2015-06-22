@@ -6,6 +6,10 @@
 
 #define SHA1_HASH_SIZE (40)
 
+size_t vault_uri_blob_prefix_size();
+
+#define VAULT_URI_MAX_SIZE (vault_uri_blob_prefix_size() + SHA1_HASH_SIZE)
+
 class Vault : public qtaround::git::Tree
 {
 public:
@@ -16,6 +20,10 @@ public:
     QString root() const { return root_; }
     QString blobs() const;
     QString blob_path(QString const &) const;
+
+    QString path_from_uri(QString const &);
+    QString uri_from_hash(QString const &);
+    QString blob_hash(QString const &path);
 private:
     QString find_root(QString const &path);
 };
