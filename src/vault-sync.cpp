@@ -49,7 +49,9 @@ static QFileInfo file_copy(QFileInfo const &from, QFileInfo const &parent
     if (dst_stat.exists()) {
         if (options.get<Options::Overwrite>() == Overwrite::No) {
             debug::debug("Do not overwrite", dst_stat.filePath());
-            return std::move(dst_stat);
+            if (options.get<Options::Update>() == Update::No
+                || !is_older(dst_stat.filePath(), from.filePath()))
+                return std::move(dst_stat);
         }
         if (!dst_stat.isFile()) {
             if (dst_stat.isSymLink())

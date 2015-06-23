@@ -15,14 +15,18 @@ enum class Depth { Shallow = 0, Recursive };
 enum class Overwrite { No = 0, Yes };
 enum class Deref { No = 0, Yes };
 enum class DataHint { Compact = 0, Big };
-enum class Options { Vault, Data, Depth, Overwrite, Deref, Last_ = Deref };
+enum class Update { No = 0, Yes };
+enum class Options { Vault, Data, Depth, Overwrite, Deref
+        , Update, Last_ = Update };
 
 typedef Record<Options
-                 , VaultHandle, DataHint, Depth, Overwrite, Deref> options_type;
+               , VaultHandle, DataHint, Depth, Overwrite
+               , Deref, Update> options_type;
 
 template <> struct RecordTraits<options_type> {
     RECORD_FIELD_NAMES(options_type
-                       , "Vault", "Data", "Depth", "Overwrite", "Deref");
+                       , "Vault", "Data", "Depth", "Overwrite"
+                       , "Deref", "Update");
 };
 
 enum class Context { Options, Action, Src, Dst, Last_ = Dst };

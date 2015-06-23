@@ -32,6 +32,8 @@ int main_(int argc, char **argv)
                                  QS_("Use blob mode"))
          << QCommandLineOption({QS_("r"), QS_("recursive")},
                                  QS_("Copy directories recursively"))
+         << QCommandLineOption({QS_("u"), QS_("update")},
+                                 QS_("Update dst only if newer"))
         ;
     parser.addPositionalArgument(QS_("src"), QS_("Source file/directory"));
     parser.addPositionalArgument(QS_("dst"), QS_("Destination file/directory"));
@@ -49,6 +51,7 @@ int main_(int argc, char **argv)
             , parser.isSet(QS_("recursive")) ? Depth::Recursive : Depth::Shallow
             , parser.isSet(QS_("no-clobber")) ? Overwrite::No : Overwrite::Yes
             , parser.isSet(QS_("dereference")) ? Deref::Yes : Deref::No
+            , parser.isSet(QS_("update")) ? Update::Yes : Update::No
             };
 
     Processor processor;
