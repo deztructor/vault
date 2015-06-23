@@ -32,6 +32,15 @@ static void get_stat_or_fail(QString const &path, struct stat &stat)
         raise_std_error({{"msg", "Can't get stat"}, {"path", path}});
 }
 
+bool is_older(QString const &path_a, QString const &path_b)
+{
+    struct stat stat_a;
+    struct stat stat_b;
+    get_stat_or_fail(path_a, stat_a);
+    get_stat_or_fail(path_b, stat_b);
+    return is_older(stat_a, stat_b);
+}
+
 static void get_file_times(QString const &path, struct timespec *times)
 {
     struct stat stat;

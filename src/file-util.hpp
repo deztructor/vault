@@ -88,6 +88,68 @@ inline bool operator == (QFileInfo const &a, QFileInfo const &b)
     return a.exists() && b.exists() && fileId(a) == fileId(b);
 }
 
+class AFileTime
+{
+public:
+    AFileTime(struct timespec const &src)
+        : data_(src)
+    {}
+    virtual ~AFileTime() {}
+    struct timespec const &raw() const {
+        return data_;
+    }
+private:
+    struct timespec data_;
+};
+
+enum class FileTimes { First_ = 0, Access = First_
+        , Modification, Change, Last_ = Change };
+
+template <FileTimes T>
+class FileTime {};
+
+template <>
+class FileTime<FileTimes::Access> : public AFileTime
+{
+public:
+    FileTime(struct stat const &src) : AFileTime(src.st_atim) {}
+};
+
+template <>
+class FileTime<FileTimes::Modification> : public AFileTime
+{
+public:
+    FileTime(struct stat const &src) : AFileTime(src.st_mtim) {}
+};
+
+template <>
+class FileTime<FileTimes::Change> : public AFileTime
+{
+public:
+    FileTime(struct stat const &src) : AFileTime(src.st_ctim) {}
+};
+
+inline bool operator == (AFileTime const &a, AFileTime const &b)
+{
+    return a.raw() == b.raw();
+}
+
+inline bool operator < (AFileTime const &a, AFileTime const &b)
+{
+    auto const &x = a.raw();
+    auto const &y = b.raw();
+    return (x.tv_sec < y.tv_sec) || (x.tv_sec == y.tv_sec
+                                     && x.tv_nsec < y.tv_nsec);
+}
+
+inline bool is_older(struct stat const &a, struct stat const &b)
+{
+    return FileTime<FileTimes::Modification>(a)
+        < FileTime<FileTimes::Modification>(b);
+}
+
+bool is_older(QString const &path_a, QString const &path_b);
+
 struct MMap {
     MMap(void *pp, size_t l) : p(pp), len(l) { }
     void *p;
