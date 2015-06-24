@@ -1,0 +1,46 @@
+#!/bin/bash
+
+OPTS=$(getopt -o t:h -n "$0" -- "$@")
+[ $? -eq 0 ] || error 3 "Error parsing options $@"
+eval set -- "$OPTS"
+
+show_help() {
+    echo "Usage: $0 <options> <commit-id>" >&2
+    echo -e "\nOptions:\n\t-t <prefix> - copy tag with prefix" >&2
+}
+
+tag_prefix=
+while true; do
+    case "$1" in
+        -t)
+            tag_prefix=$2
+            shift 2
+            ;;
+        -h)
+            show_help
+            exit 0
+            ;;
+        -- )
+            shift
+            ;;
+        *)
+            commit=$1
+            shift
+            break
+            ;;
+    esac
+done
+
+if [ "x$commit" == "x" ] || [ "x$tag_prefix" == "x" ]; then
+    show_help
+    exit 1
+fi
+
+refs=$(git show -s --format="%D" $commit | sed -e 's| *tag: *|T:|g' | tr "," "\n")
+for ref in $refs; do
+    if [[ $ref == T:* ]]; then
+        tag=${ref:2}
+        echo "Tag: $tag"
+        git tag ${tag_prefix}${tag} $copied_commit
+    fi
+done
