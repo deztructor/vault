@@ -189,6 +189,7 @@ static const FileMode dirForUserOnly =
 
 mode_t toPosixMode(QFileDevice::Permissions perm);
 
+FileHandle open_file(QString const &path, int flags, FileMode *pmode);
 void copy_utime(QFile const &fd, QFileInfo const &src);
 void copy_utime(QString const &target, QFileInfo const &src);
 enum class CopyTime { Never, Always, NewOnly };

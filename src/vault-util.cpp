@@ -1,10 +1,12 @@
 #include "config.hpp"
 #include "vault-util.hpp"
 
+#include <qtaround/os.hpp>
 #include <qtaround/subprocess.hpp>
 
 #include <QString>
 
+namespace os = qtaround::os;
 namespace error = qtaround::error;
 namespace subprocess = qtaround::subprocess;
 
@@ -58,4 +60,10 @@ QString Vault::blob_hash(QString const &path)
     if (res.size() != SHA1_HASH_SIZE)
         error::raise({{QS_("msg"), QS_("Wrong blob path")}, {QS_("path"), path}});
     return res;
+}
+
+bool Vault::is_blob_path(QFileInfo const &path)
+{
+    auto full_path = path.canonicalFilePath();
+    return full_path.size() && os::path::isDescendent(full_path, blobs());
 }

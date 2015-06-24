@@ -208,6 +208,18 @@ inline int open_qs(QString const &name, int flags, mode_t mode)
     return ::open(data.data(), flags, mode);
 }
 
+FileHandle open_file(QString const &path, int flags, FileMode *pmode)
+{
+    auto handle = std::make_shared<QFile>(path);
+    auto fd = (pmode
+               ? open_qs(path, flags, toPosixMode(*pmode))
+               : open_qs(path, flags, 0640));
+    if (fd >= 0)
+        handle->open(fd, QIODevice::ReadWrite, QFileDevice::AutoCloseHandle);
+
+    return handle;
+}
+
 FileHandle copy_data(QString const &dst_path
                      , QFileInfo const &from, FileMode *pmode)
 {
@@ -220,14 +232,8 @@ FileHandle copy_data(QString const &dst_path
         error::raise(map({{"dst", dst_path}
                     , {"error", ::strerror(errno)}}), info);
     };
-    auto dst = std::make_shared<QFile>(dst_path);
-    auto flags = O_RDWR | O_CREAT;
-    auto fd = (pmode
-               ? open_qs(dst_path, flags, toPosixMode(*pmode))
-               : open_qs(dst_path, flags, 0640));
-    if (fd < 0)
-        raise_dst_error({{"msg", "Can't open/create file"}});
-    if (!dst->open(fd, QIODevice::ReadWrite, QFileDevice::AutoCloseHandle))
+    auto dst = open_file(dst_path, O_RDWR | O_CREAT, pmode);
+    if (!dst->isOpen())
         raise_dst_error({{"msg", "Cant' open dst file"}});
     using namespace std::placeholders;
     copy(dst, src, from.size(), std::bind(raise_dst_error, _1));

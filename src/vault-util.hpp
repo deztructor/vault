@@ -24,6 +24,11 @@ public:
     QString path_from_uri(QString const &);
     QString uri_from_hash(QString const &);
     QString blob_hash(QString const &path);
+    bool is_blob_path(QFileInfo const &path);
+    bool is_blob_path(QString const &path)
+    {
+        return is_blob_path(QFileInfo(path));
+    }
 private:
     QString find_root(QString const &path);
 };
